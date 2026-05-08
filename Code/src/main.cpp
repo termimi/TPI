@@ -3,20 +3,29 @@
 #include <AsyncTCP.h>
 #include <WiFi.h>
 #include <ESPAsyncWiFiManager.h>
+#include <SD.h>
+#include <SPI.h>
+
 #include "mcp_web_server.h"
 #include "mcp_tools_handler.h"
 #include "mcp_handler.h"
 #include "mcp_tools.h"
 
-// global vars
+#define SD_SPI_CS_PIN    4
+#define SD_SPI_SCK_PIN  36
+#define SD_SPI_MISO_PIN 35
+#define SD_SPI_MOSI_PIN 37
+
+///////////// Vars /////////////
 McpWebServer mcp_web_server(80);
 uint16_t number_of_tools = 2;
 unsigned long lastDiagnosticTime = 0;
 DNSServer dns;
 
 void printMemoryInfo();
+bool save_json_info__to_sd(const char* path, JsonDocument& doc);
 
-///////////// tools /////////
+///////////// tools /////////////
 class SerialTool : public McpTool{
   protected:
     void add_schema_prop(JsonObject &schema) const override{
@@ -72,36 +81,40 @@ class SystemInfoTool : public McpTool {
 
 
 void setup() {
+  ///////// Config M5 /////////
   auto cfg = M5.config();
   M5.begin(cfg);
   M5.Power.Axp2101.begin();
-
   M5.Power.setUsbOutput(true);
   
+  ///////// Serial Config /////////
   Serial.begin(115200);
   delay(10000);
 
-  // start wifi
+  ///////// Wifi config /////////
   Serial.println("--- WiFi Config ---");
-  // WiFi.disconnect(true, true);
-  // WiFi.mode(WIFI_OFF);
-  // delay(500);
-  // WiFi.mode(WIFI_AP_STA);
-  // delay(100);
   AsyncWebServer temp_server(80);
   AsyncWiFiManager wifi_manager(&temp_server,&dns);
 
   Serial.println("--- WiFi Manager Launching ---");
-
-  // Avant le autoConnect
+  // removes the logs so the AP does not crash
   wifi_manager.setDebugOutput(false);
-  //wifi_manager.setConfigPortalTimeout(180); 
-  if (!wifi_manager.autoConnect("mcp_esp", "rootrootroot")) {
-      Serial.println("Échec de connexion et timeout atteint");
-      delay(3000);
-      ESP.restart();
-    }
 
+  if (!wifi_manager.autoConnect("mcp_esp", "rootrootroot")) {
+    Serial.println("Connexion failed, restarting ESP");
+    delay(3000);
+    ESP.restart();
+  }
+
+  ///////// SD Card config /////////
+  SPI.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, SD_SPI_CS_PIN);
+  if (!SD.begin(SD_SPI_CS_PIN, SPI, 25000000)) {
+    Serial.println("Erreur : Carte SD non détectée !");
+  } else {
+    Serial.println("Carte SD initialisée avec succès.");
+  }
+
+  ///////// MCP Config /////////
   // Get the mcp_handler
   McpHandler *mcp_handler = mcp_web_server.get_mcp_handler();
 
@@ -116,6 +129,17 @@ void setup() {
   mcp_web_server.begin();
 
   Serial.println("Server ready !");
+
+  Serial.println("Test Writing in SD card");
+  JsonDocument doc;
+  doc["device"] = "M5Stack Core S3 SE";
+  doc["uptime"] = millis();
+  doc["free_heap"] = ESP.getFreeHeap();
+  if (save_json_info__to_sd("/log.json", doc)) {
+    Serial.println("SD card writed");
+  } else {
+    Serial.println("Writing in SD card failed");
+  }
 }
 
 void loop() {
@@ -150,4 +174,23 @@ void printMemoryInfo() {
   Serial.printf("Programme    : %u octets\n", sketchSize);
   Serial.printf("Espace libre : %u octets\n", ESP.getFreeSketchSpace());
   Serial.println("--------------------------\n");
+}
+
+bool save_json_info__to_sd(const char* path, JsonDocument& doc){
+  File file = SD.open(path, FILE_WRITE);
+  
+  if (!file) {
+    Serial.println("Cannot open the file to write in it");
+    return false;
+  }
+
+  if (serializeJson(doc, file) == 0) {
+    Serial.println("Échec de l'écriture du JSON");
+    file.close();
+    return false;
+  }
+
+  file.close();
+  Serial.printf("Fichier %s enregistré !\n", path);
+  return true;
 }
