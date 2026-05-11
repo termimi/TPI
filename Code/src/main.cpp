@@ -5,23 +5,34 @@
 #include <ESPAsyncWiFiManager.h>
 #include <SD.h>
 #include <SPI.h>
+#include <Unit_Sonic.h>
 
 #include "mcp_web_server.h"
 #include "mcp_tools_handler.h"
 #include "mcp_handler.h"
 #include "mcp_tools.h"
+#include "M5_STHS34PF80.h"
 
 #define SD_SPI_CS_PIN    4
 #define SD_SPI_SCK_PIN  36
 #define SD_SPI_MISO_PIN 35
 #define SD_SPI_MOSI_PIN 37
 
+///////////// Const /////////////
+SONIC_I2C ULTRASONIC_SENSOR;
+M5_STHS34PF80 TMOS;
+
 ///////////// Vars /////////////
+//MCP
 McpWebServer mcp_web_server(80);
 uint16_t number_of_tools = 2;
-unsigned long lastDiagnosticTime = 0;
 DNSServer dns;
+// PIR TMOS
+int16_t motionVal = 0, presenceVal = 0;
+//Other
+unsigned long lastDiagnosticTime = 0;
 
+///////////// Funcs /////////////
 void printMemoryInfo();
 bool save_json_info__to_sd(const char* path, JsonDocument& doc);
 
@@ -86,6 +97,11 @@ void setup() {
   M5.begin(cfg);
   M5.Power.Axp2101.begin();
   M5.Power.setUsbOutput(true);
+
+  // Find the sda pin for the current M5 board
+  int8_t sda = M5.getPin(m5::pin_name_t::port_a_sda);
+  // Find the scl pin for the current M5 board
+  int8_t scl = M5.getPin(m5::pin_name_t::port_a_scl);
   
   ///////// Serial Config /////////
   Serial.begin(115200);
@@ -107,13 +123,60 @@ void setup() {
   }
 
   ///////// SD Card config /////////
+  Serial.println("Init SD card");
   SPI.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, SD_SPI_CS_PIN);
   if (!SD.begin(SD_SPI_CS_PIN, SPI, 25000000)) {
-    Serial.println("Erreur : Carte SD non détectée !");
+    Serial.println("Error: SD card not detected");
   } else {
-    Serial.println("Carte SD initialisée avec succès.");
+    Serial.println("SD card initialized successfully.");
   }
 
+  ///////// Ultrasonic sensor config /////////
+  Serial.println("Init ultra sonic sensor");
+  Wire.begin(sda,scl);
+  ULTRASONIC_SENSOR.begin();
+
+  ///////// PIR sensor config /////////
+  Serial.println("Init PIR TEMOS sensor");
+  if (TMOS.begin(&Wire, STHS34PF80_I2C_ADDRESS, sda, scl) == false) {
+    Serial.println("Error : TMOS sensor not found on the port A");
+  } else {
+    // Set Mode to wide to avoid saturation
+    TMOS.setGainMode(STHS34PF80_GAIN_DEFAULT_MODE);
+    TMOS.setTmosSensitivity(0xff);
+
+    // Set TMOS frequency
+    TMOS.setTmosODR(STHS34PF80_TMOS_ODR_OFF);
+    TMOS.setTmosODR(STHS34PF80_TMOS_ODR_AT_15Hz);
+
+    // Set TMOS Thresholds and Hystersis to avoid false positive
+    TMOS.setMotionThreshold(0xFF);
+    TMOS.setPresenceThreshold(0x258);
+    TMOS.setPresenceHysteresis(0x32);
+    TMOS.setMotionHysteresis(0x0);
+
+    // Reset algo to applay changes (asked in doc)
+    TMOS.resetAlgo();
+    Serial.println("TMOS Sensor is ready");
+  }
+  ///////// RTC config /////////
+  Serial.print("RTC Config");
+
+  // Checks if the RTC module has already been configured
+  if(M5.Rtc.getDateTime().date.date < 2026){
+    if(WiFi.status() == WL_CONNECTED){
+      configTzTime("CET-1CEST,M3.5.0,M10.5.0", "ch.pool.ntp.org");
+
+      struct tm time_info;
+      if (getLocalTime(&time_info)) {
+        M5.Rtc.setDateTime(&time_info);
+        M5.Display.println("RTC updated via NTP");
+      }
+    }
+    else{
+      Serial.println("WARNING : WiFi not connected, RTC configuration cannot be done");
+    }
+  }
   ///////// MCP Config /////////
   // Get the mcp_handler
   McpHandler *mcp_handler = mcp_web_server.get_mcp_handler();
@@ -144,7 +207,30 @@ void setup() {
 
 void loop() {
   //M5.update() handle buttons & alim
-  M5.update(); 
+  M5.update();
+
+  // Prepare TMOS data
+  sths34pf80_tmos_drdy_status_t dataReady;
+  TMOS.getDataReady(&dataReady);
+
+  if (dataReady.drdy == 1) {
+    sths34pf80_tmos_func_status_t status;
+    TMOS.getPresenceValue(&presenceVal);
+    TMOS.getMotionValue(&motionVal);
+    TMOS.getStatus(&status);
+
+    if(status.mot_flag == 1 && status.pres_flag == 1 && motionVal > 300){
+      Serial.print("Organic presence and motion detected");
+      Serial.printf("PrescenceValue:%d\n", presenceVal);
+      Serial.printf("MotionValue:%d\n", motionVal); 
+    }
+  }
+
+  if (millis() - lastDiagnosticTime > 2000) {
+    lastDiagnosticTime = millis();
+    Serial.printf("%.2fmm", ULTRASONIC_SENSOR.getDistance());
+    Serial.println("");
+  }
 
   if (millis() - lastDiagnosticTime > 10000) {
     printMemoryInfo();
