@@ -6,6 +6,7 @@
 #include <SD.h>
 #include <SPI.h>
 #include <Unit_Sonic.h>
+#include <esp_sntp.h>
 
 #include "mcp_web_server.h"
 #include "mcp_tools_handler.h"
@@ -17,6 +18,8 @@
 #define SD_SPI_SCK_PIN  36
 #define SD_SPI_MISO_PIN 35
 #define SD_SPI_MOSI_PIN 37
+
+#define SWISS_TZ "CET-1CEST,M3.5.0,M10.5.0/3"
 
 ///////////// Const /////////////
 SONIC_I2C ULTRASONIC_SENSOR;
@@ -115,12 +118,8 @@ void setup() {
   Serial.println("--- WiFi Manager Launching ---");
   // removes the logs so the AP does not crash
   wifi_manager.setDebugOutput(false);
-
-  if (!wifi_manager.autoConnect("mcp_esp", "rootrootroot")) {
-    Serial.println("Connexion failed, restarting ESP");
-    delay(3000);
-    ESP.restart();
-  }
+  wifi_manager.setConfigPortalTimeout(20);
+  wifi_manager.autoConnect("mcp_esp", "rootrootroot");
 
   ///////// SD Card config /////////
   Serial.println("Init SD card");
@@ -162,21 +161,66 @@ void setup() {
   ///////// RTC config /////////
   Serial.print("RTC Config");
 
-  // Checks if the RTC module has already been configured
-  if(M5.Rtc.getDateTime().date.date < 2026){
-    if(WiFi.status() == WL_CONNECTED){
-      configTzTime("CET-1CEST,M3.5.0,M10.5.0", "ch.pool.ntp.org");
+  // Get date with SNTP if WiFi is connected
+  configTzTime(SWISS_TZ, "ch.pool.ntp.org");
+  if(WiFi.status() == WL_CONNECTED){
+    int retry = 0;
+    while (sntp_get_sync_status() != SNTP_SYNC_STATUS_COMPLETED && retry < 20) {
+      Serial.print('.');
+      delay(500);
+      retry++;
+    }
 
-      struct tm time_info;
-      if (getLocalTime(&time_info)) {
-        M5.Rtc.setDateTime(&time_info);
-        M5.Display.println("RTC updated via NTP");
-      }
+    Serial.println();
+    struct tm time_info;
+
+    if (getLocalTime(&time_info)) {
+      // Convert local time to timestamp
+      time_t time = mktime(&time_info);
+      // Convert timestamp to greenwich mean time
+      M5.Rtc.setDateTime(gmtime(&time));
+      Serial.println("RTC updated via NTP");
     }
     else{
-      Serial.println("WARNING : WiFi not connected, RTC configuration cannot be done");
+      Serial.println("Could not get local time, RTC Update failed");
     }
   }
+  else{
+    Serial.println("WARNING : WiFi not connected, NTP configuration cannot be done");
+    auto dt = M5.Rtc.getDateTime();
+      
+    // Convert RTC info to internal clock
+    struct tm rtc_time_info = {0};
+    rtc_time_info.tm_year = dt.date.year - 1900;
+    rtc_time_info.tm_mon  = dt.date.month - 1;
+    rtc_time_info.tm_mday = dt.date.date;
+    rtc_time_info.tm_hour = dt.time.hours;
+    rtc_time_info.tm_min  = dt.time.minutes;
+    rtc_time_info.tm_sec  = dt.time.seconds;
+
+    // set correct time into the internal clock
+    setenv("TZ", "UTC0", 1);
+    tzset();
+    time_t timestamp = mktime(&rtc_time_info);
+    setenv("TZ", SWISS_TZ, 1);
+    tzset();
+    struct timeval now = { .tv_sec = timestamp };
+    settimeofday(&now, NULL); 
+    
+    Serial.println("Time configured with the RTC module");
+  }
+  static constexpr const char* const wd[7] = {"Sun", "Mon", "Tue", "Wed",
+                                                "Thr", "Fri", "Sat"};
+
+  time_t now = time(nullptr);
+  struct tm* local_tm = localtime(&now);
+  Serial.printf("LOCAL TIME  :%04d/%02d/%02d (%s)  %02d:%02d:%02d\r\n",
+                local_tm->tm_year + 1900, local_tm->tm_mon + 1, local_tm->tm_mday,
+                wd[local_tm->tm_wday], local_tm->tm_hour, local_tm->tm_min, local_tm->tm_sec
+  );
+
+  Serial.println("");
+
   ///////// MCP Config /////////
   // Get the mcp_handler
   McpHandler *mcp_handler = mcp_web_server.get_mcp_handler();
