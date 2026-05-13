@@ -38,6 +38,8 @@ unsigned long lastDiagnosticTime = 0;
 ///////////// Funcs /////////////
 void printMemoryInfo();
 bool save_json_info__to_sd(const char* path, JsonDocument& doc);
+void display_animation_function(LovyanGFX* gfx);
+void emit_sound(m5::Speaker_Class* speaker);
 
 ///////////// tools /////////////
 class SerialTool : public McpTool{
@@ -110,12 +112,21 @@ void setup() {
   Serial.begin(115200);
   delay(10000);
 
+  ///////// Screen Config /////////
+  int textsize = M5.Display.height() / 130;
+  if (textsize == 0) {
+    textsize = 1;
+  }
+  M5.Display.setTextSize(textsize);
+
   ///////// Wifi config /////////
   Serial.println("--- WiFi Config ---");
+  M5.Display.println("--- WiFi Config ---");
   AsyncWebServer temp_server(80);
   AsyncWiFiManager wifi_manager(&temp_server,&dns);
 
   Serial.println("--- WiFi Manager Launching ---");
+  M5.Display.println("--- WiFi Manager Launching ---");
   // removes the logs so the AP does not crash
   wifi_manager.setDebugOutput(false);
   wifi_manager.setConfigPortalTimeout(20);
@@ -126,19 +137,25 @@ void setup() {
   SPI.begin(SD_SPI_SCK_PIN, SD_SPI_MISO_PIN, SD_SPI_MOSI_PIN, SD_SPI_CS_PIN);
   if (!SD.begin(SD_SPI_CS_PIN, SPI, 25000000)) {
     Serial.println("Error: SD card not detected");
-  } else {
+    M5.Display.println("Error: SD card not detected");
+  } 
+  else {
     Serial.println("SD card initialized successfully.");
+    M5.Display.println("SD card initialized successfully.");
   }
 
   ///////// Ultrasonic sensor config /////////
   Serial.println("Init ultra sonic sensor");
+  M5.Display.println("Init ultra sonic sensor");
   Wire.begin(sda,scl);
   ULTRASONIC_SENSOR.begin();
 
   ///////// PIR sensor config /////////
   Serial.println("Init PIR TEMOS sensor");
+  M5.Display.println("Init PIR TEMOS sensor");
   if (TMOS.begin(&Wire, STHS34PF80_I2C_ADDRESS, sda, scl) == false) {
     Serial.println("Error : TMOS sensor not found on the port A");
+    M5.Display.println("Error : TMOS sensor not found on the port A");
   } else {
     // Set Mode to wide to avoid saturation
     TMOS.setGainMode(STHS34PF80_GAIN_DEFAULT_MODE);
@@ -157,9 +174,11 @@ void setup() {
     // Reset algo to applay changes (asked in doc)
     TMOS.resetAlgo();
     Serial.println("TMOS Sensor is ready");
+    M5.Display.println("TMOS Sensor is ready");
   }
   ///////// RTC config /////////
   Serial.print("RTC Config");
+  M5.Display.println("RTC Config");
 
   // Get date with SNTP if WiFi is connected
   configTzTime(SWISS_TZ, "ch.pool.ntp.org");
@@ -180,13 +199,16 @@ void setup() {
       // Convert timestamp to greenwich mean time
       M5.Rtc.setDateTime(gmtime(&time));
       Serial.println("RTC updated via NTP");
+      M5.Display.println("RTC updated via NTP");
     }
     else{
       Serial.println("Could not get local time, RTC Update failed");
+      M5.Display.println("Could not get local time, RTC Update failed");
     }
   }
   else{
     Serial.println("WARNING : WiFi not connected, NTP configuration cannot be done");
+    M5.Display.println("WARNING : WiFi not connected, NTP configuration cannot be done");
     auto dt = M5.Rtc.getDateTime();
       
     // Convert RTC info to internal clock
@@ -208,6 +230,7 @@ void setup() {
     settimeofday(&now, NULL); 
     
     Serial.println("Time configured with the RTC module");
+    M5.Display.println("Time configured with the RTC module");
   }
   static constexpr const char* const wd[7] = {"Sun", "Mon", "Tue", "Wed",
                                                 "Thr", "Fri", "Sat"};
@@ -236,22 +259,28 @@ void setup() {
   mcp_web_server.begin();
 
   Serial.println("Server ready !");
+  M5.Display.println("Server ready !");
 
   Serial.println("Test Writing in SD card");
+  M5.Display.println("Test Writing in SD card");
+
   JsonDocument doc;
   doc["device"] = "M5Stack Core S3 SE";
   doc["uptime"] = millis();
   doc["free_heap"] = ESP.getFreeHeap();
   if (save_json_info__to_sd("/log.json", doc)) {
     Serial.println("SD card writed");
+    M5.Display.println("SD card writed");
   } else {
     Serial.println("Writing in SD card failed");
+    M5.Display.println("Writing in SD card failed");
   }
 }
 
 void loop() {
   //M5.update() handle buttons & alim
   M5.update();
+  M5.Display.clear();
 
   // Prepare TMOS data
   sths34pf80_tmos_drdy_status_t dataReady;
@@ -270,17 +299,32 @@ void loop() {
     }
   }
 
-  if (millis() - lastDiagnosticTime > 2000) {
-    lastDiagnosticTime = millis();
+  static unsigned long last_distance_check = 0;
+  if (millis() - last_distance_check > 2000) {
+    last_distance_check = millis();
     Serial.printf("%.2fmm", ULTRASONIC_SENSOR.getDistance());
     Serial.println("");
   }
 
-  if (millis() - lastDiagnosticTime > 10000) {
+  static unsigned long last_sound = 0;
+  if (millis() - last_sound > 3000) {
+    emit_sound(&M5.Speaker);
+    last_sound = millis();
+  }
+
+  static unsigned long last_diagnostic = 0;
+  if (millis() - last_diagnostic > 10000) {
     printMemoryInfo();
-    lastDiagnosticTime = millis();
+    last_diagnostic = millis();
     Serial.println(WiFi.localIP());
   }
+
+  int x      = rand() % M5.Display.width();
+  int y      = rand() % M5.Display.height();
+  int r      = (M5.Display.width() >> 4) + 2;
+  uint16_t c = rand();
+  M5.Display.fillCircle(x, y, r, c);
+  display_animation_function(&M5.Display);
 }
 
 
@@ -323,4 +367,20 @@ bool save_json_info__to_sd(const char* path, JsonDocument& doc){
   file.close();
   Serial.printf("Fichier %s enregistré !\n", path);
   return true;
+}
+
+void display_animation_function(LovyanGFX* gfx) {
+  int textsize = M5.Display.height() / 60;
+  if (textsize == 0) {
+    textsize = 1;
+  }
+  M5.Display.setTextSize(textsize);
+  int x      = rand() % gfx->width();
+  int y      = rand() % gfx->height();
+  int r      = (gfx->width() >> 4) + 2;
+  uint16_t c = rand();
+  gfx->fillRect(x - r, y - r, r * 2, r * 2, c);
+}
+void emit_sound(m5::Speaker_Class* speaker){
+    speaker->tone(4000, 100);
 }
