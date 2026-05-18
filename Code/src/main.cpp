@@ -7,6 +7,7 @@
 #include <SPI.h>
 #include <Unit_Sonic.h>
 #include <esp_sntp.h>
+#include <atomic>
 
 #include "mcp_web_server.h"
 #include "mcp_tools_handler.h"
@@ -35,6 +36,8 @@ DNSServer dns;
 int16_t motionVal = 0, presenceVal = 0;
 // Other
 unsigned long lastDiagnosticTime = 0;
+std::atomic<bool> trigger_play_sound{false};
+std::atomic<bool> trigger_animation{false};
 
 ///////////// Funcs /////////////
 void printMemoryInfo();
@@ -100,6 +103,48 @@ public:
              ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getSketchSize());
 
     res["text"] = String(buffer);
+    return true;
+  }
+};
+
+class SpeakerTool : public McpTool
+{
+private:
+  void add_schema_prop(JsonObject &schema) const override
+  {
+  }
+
+public:
+  SpeakerTool() : McpTool("PlaySound", "Play a sound", "Plays a sound with the ESP32") {}
+
+  bool execute(const JsonVariantConst recieved_args, JsonArray &result, String &error) const override
+  {
+    JsonObject res = result.add<JsonObject>();
+    res["type"] = "text";
+    trigger_play_sound = true;
+    res["text"] = "OK";
+    return true;
+  }
+};
+
+class ScreenTool : public McpTool
+{
+private:
+  void add_schema_prop(JsonObject &schema) const override
+  {
+  }
+
+public:
+  ScreenTool() : McpTool("DisplayAnimation", "Display animation", "Displays a preconfigured animation on the ESP32 screen") {}
+
+  bool execute(const JsonVariantConst recieved_args, JsonArray &result, String &error) const override
+  {
+    JsonObject res = result.add<JsonObject>();
+    res["type"] = "text";
+
+    trigger_animation = true;
+
+    res["text"] = "OK";
     return true;
   }
 };
@@ -273,8 +318,14 @@ void setup()
   McpToolHandler *mcp_tool_handler = mcp_handler->create_tool_handler(number_of_tools);
   SerialTool *serial_tool = new SerialTool();
   SystemInfoTool *system_tool = new SystemInfoTool();
+  ScreenTool *screen_tool = new ScreenTool();
+  SpeakerTool *speaker_tool = new SpeakerTool();
+
   mcp_tool_handler->add_tool(serial_tool);
   mcp_tool_handler->add_tool(system_tool);
+  mcp_tool_handler->add_tool(screen_tool);
+  mcp_tool_handler->add_tool(speaker_tool);
+
 
   // start asyncWebServer
   mcp_web_server.begin();
@@ -334,13 +385,6 @@ void loop()
     Serial.println("");
   }
 
-  static unsigned long last_sound = 0;
-  if (millis() - last_sound > 15000)
-  {
-    play_wav_from_sd();
-    last_sound = millis();
-  }
-
   static unsigned long last_diagnostic = 0;
   if (millis() - last_diagnostic > 10000)
   {
@@ -349,12 +393,23 @@ void loop()
     Serial.println(WiFi.localIP());
   }
 
-  int x = rand() % M5.Display.width();
-  int y = rand() % M5.Display.height();
-  int r = (M5.Display.width() >> 4) + 2;
-  uint16_t c = rand();
-  M5.Display.fillCircle(x, y, r, c);
-  display_animation_function(&M5.Display);
+  if(trigger_animation){
+    unsigned long start_time = millis();
+    while(millis() - start_time < 10000){
+      int x = rand() % M5.Display.width();
+      int y = rand() % M5.Display.height();
+      int r = (M5.Display.width() >> 4) + 2;
+      uint16_t c = rand();
+      M5.Display.fillCircle(x, y, r, c);
+      display_animation_function(&M5.Display);
+    }
+    trigger_animation = false;
+  }
+
+  if(trigger_play_sound){
+    play_wav_from_sd();
+    trigger_play_sound = false;
+  }
 }
 
 void printMemoryInfo()
@@ -419,8 +474,6 @@ void display_animation_function(LovyanGFX *gfx)
   gfx->fillRect(x - r, y - r, r * 2, r * 2, c);
 }
 
-/// @brief Emit a sound (source : https://docs.m5stack.com/en/arduino/m5cores3/speaker)
-/// @param speaker
 bool play_wav_from_sd(uint32_t repeat, int channel, bool stop_current)
 {
   File wav_file = SD.open(WAV_FILENAME);
@@ -487,7 +540,7 @@ bool play_wav_segmented(const char *filename, uint32_t repeat, int channel, bool
   File wavFile = SD.open(filename, FILE_READ);
   if (!wavFile) return false;
 
-  uint32_t sampleRate = 0, dataOffset = 0, dataSize = 0;
+  uint32_t sampleRate = 0, audio_start_byte = 0, dataSize = 0;
   uint16_t channels = 0, bitsPerSample = 0;
 
   // Check the 12 first bytes to see if the file is a WAV
@@ -498,7 +551,7 @@ bool play_wav_segmented(const char *filename, uint32_t repeat, int channel, bool
     return false;
   }
 
-  // 2. Parcourir intelligemment les "chunks" pour esquiver les métadonnées
+  // Finds the audio data in the file
   while (wavFile.available()) {
     char chunkId[4];
     uint32_t chunkSize;
@@ -511,11 +564,11 @@ bool play_wav_segmented(const char *filename, uint32_t repeat, int channel, bool
       channels = *(uint16_t *)(fmtData + 2);
       sampleRate = *(uint32_t *)(fmtData + 4);
       bitsPerSample = *(uint16_t *)(fmtData + 14);
-      if (chunkSize > 16) wavFile.seek(wavFile.position() + (chunkSize - 16)); // Skip du reste
+      if (chunkSize > 16) wavFile.seek(wavFile.position() + (chunkSize - 16)); // skips every thing else
     }
     else if (strncmp(chunkId, "data", 4) == 0) {
       // Audio has been found
-      dataOffset = wavFile.position();
+      audio_start_byte = wavFile.position();
       dataSize = chunkSize;
       break; 
     }
@@ -524,28 +577,29 @@ bool play_wav_segmented(const char *filename, uint32_t repeat, int channel, bool
     }
   }
 
-  if (dataOffset == 0 || channels == 0) {
+  if (audio_start_byte == 0 || channels == 0) {
     Serial.println("Error : fmt or data chunk not found");
     wavFile.close();
     return false;
   }
 
-  Serial.printf("WAV: %dHz, %dch, %dbit, Data offset: %d\n", sampleRate, channels, bitsPerSample, dataOffset);
+  Serial.printf("WAV: %dHz, %dch, %dbit, Data offset: %d\n", sampleRate, channels, bitsPerSample, audio_start_byte);
 
   // Make sure the sampples are the right size
   size_t bytesPerSample = (bitsPerSample / 8) * channels;
-  size_t chunkSizeInSamples = 16384 / bytesPerSample; // 16384 = 16ko wich is good for the Core S3 SE
-  size_t chunkSize = chunkSizeInSamples * bytesPerSample;
+  size_t chunks_in_samples = 16384 / bytesPerSample; // 16384 = 16ko wich is good for the Core S3 SE
+  size_t chunkSize = chunks_in_samples * bytesPerSample; // total size of a complete chunk
 
   uint8_t *chunkBuffer = nullptr;
   size_t actualChunkSize = chunkSize;
 
+  // Tries to allocate the the complete chunksize + 44 bytes (wav header)
   while (actualChunkSize >= 4096 && !chunkBuffer) {
     chunkBuffer = (uint8_t *)malloc(actualChunkSize + 44);
     if (!chunkBuffer) {
       actualChunkSize /= 2;
-      chunkSizeInSamples = actualChunkSize / bytesPerSample;
-      actualChunkSize = chunkSizeInSamples * bytesPerSample;
+      chunks_in_samples = actualChunkSize / bytesPerSample;
+      actualChunkSize = chunks_in_samples * bytesPerSample;
     }
   }
 
@@ -555,7 +609,7 @@ bool play_wav_segmented(const char *filename, uint32_t repeat, int channel, bool
     return false;
   }
 
-  // 3. Fabriquer un en-tête 44-octets pur et parfait pour tromper le Speaker
+  // Builds a wav header
   uint8_t pristineHeader[44] = {
     'R', 'I', 'F', 'F',
     0, 0, 0, 0, // ChunkSize (à remplir plus bas)
@@ -569,7 +623,7 @@ bool play_wav_segmented(const char *filename, uint32_t repeat, int channel, bool
     0, 0,        // BlockAlign
     (uint8_t)bitsPerSample, (uint8_t)(bitsPerSample >> 8),
     'd', 'a', 't', 'a',
-    0, 0, 0, 0   // Subchunk2Size (à remplir plus bas)
+    0, 0, 0, 0   // to complete in the code under
   };
 
   uint32_t byteRate = sampleRate * channels * (bitsPerSample / 8);
@@ -577,12 +631,12 @@ bool play_wav_segmented(const char *filename, uint32_t repeat, int channel, bool
   memcpy(pristineHeader + 28, &byteRate, 4);
   memcpy(pristineHeader + 32, &blockAlign, 2);
 
+  // Reads the audio
   for (uint32_t rep = 0; rep < repeat; rep++) {
     size_t totalRead = 0;
     int segmentNum = 0;
     
-    // On se place exactement là où commence VRAIMENT l'audio
-    wavFile.seek(dataOffset); 
+    wavFile.seek(audio_start_byte); 
 
     while (totalRead < dataSize) {
       size_t bytesToRead = min(actualChunkSize, dataSize - totalRead);
