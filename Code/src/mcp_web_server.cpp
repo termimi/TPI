@@ -119,17 +119,19 @@ void McpWebServer::_on_post_mcp_request_body_callback(AsyncWebServerRequest *req
 
         // handle response with the request
         _mcp_handler->handle();
+        // Checks if the last recieved request is a tool call
+
+        if(_mcp_handler->get_is_request_call()){
+            // if so calls the tool and send the response via SSE
+            _mcp_handler->execute_tool();
+            _mcp_sse_handler->send(awnser.c_str(), "message");
+        }
+
         AsyncWebServerResponse *mcp_response = request->beginResponse(200, "application/json",awnser);
         _mcp_handler->create_mcp_response_headrer(mcp_response);
 
         request->send(mcp_response);
 
-        // Checks if the last recieved request is a tool call
-        if(_mcp_handler->get_is_request_call()){
-            // if so calls the tool and send the response via SSE
-            _mcp_handler->execute_tool();
-            _mcp_sse_handler->send(awnser,"message");
-        }
 
         Serial.println("--- REQUEST RESPONSE ---");
         Serial.println(awnser);

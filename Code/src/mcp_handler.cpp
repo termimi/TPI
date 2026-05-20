@@ -93,10 +93,15 @@ int McpHandler::_get_mcp_request_type(){
 }
 
 void McpHandler::create_mcp_response_headrer(AsyncWebServerResponse *mcp_response){
+    // CORS header
+    mcp_response->addHeader("Access-Control-Allow-Origin", "*");
+    mcp_response->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
+    mcp_response->addHeader("Access-Control-Allow-Headers", "*");
     switch (_mcp_recieved_code){
         case 0: {
             // Initialize header
             _session_id = String(millis()).c_str();
+            
             mcp_response->addHeader("Mcp-Session-Id",_session_id);
             mcp_response->setCode(200);
             mcp_response->setContentType("application/json");
@@ -105,6 +110,7 @@ void McpHandler::create_mcp_response_headrer(AsyncWebServerResponse *mcp_respons
         }
         case 1:
             if(_is_request_call_tool){
+                mcp_response->setCode(200); 
                 mcp_response->setContentType("text/event-stream");
             }
             break;
@@ -167,12 +173,12 @@ void McpHandler::execute_tool(){
         Serial.println();
         bool call_result = _mcp_tools_handler->call_tool(tool,content);
 
-        if(call_result){
-            result["isError"] = false;
-        }
-        else{
-            result["isError"] = true;
-        }
+        // if(call_result){
+        //     result["isError"] = false;
+        // }
+        // else{
+        //     result["isError"] = true;
+        // }
         serializeJson(doc,*_awnser);
         _is_request_call_tool = false;
     }

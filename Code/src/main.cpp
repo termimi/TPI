@@ -22,6 +22,7 @@
 
 #define SWISS_TZ "CET-1CEST,M3.5.0,M10.5.0/3"
 #define WAV_FILENAME "/miaou.wav"
+#define JSON_FILE "/data.json"
 
 ///////////// Const /////////////
 SONIC_I2C ULTRASONIC_SENSOR;
@@ -30,7 +31,7 @@ M5_STHS34PF80 TMOS;
 ///////////// Vars /////////////
 // MCP
 McpWebServer mcp_web_server(80);
-uint16_t number_of_tools = 2;
+uint16_t number_of_tools = 5;
 DNSServer dns;
 // PIR TMOS
 int16_t motionVal = 0, presenceVal = 0;
@@ -38,10 +39,15 @@ int16_t motionVal = 0, presenceVal = 0;
 unsigned long lastDiagnosticTime = 0;
 std::atomic<bool> trigger_play_sound{false};
 std::atomic<bool> trigger_animation{false};
+float pre_ultrasonic_distance = 0; // distance before the passage
+float post_ultrasonic_distance = 0; // distance after the passage
+uint8_t distance_threshold = 10;
+bool has_passed = false;
 
 ///////////// Funcs /////////////
 void printMemoryInfo();
 bool save_json_info__to_sd(const char *path, JsonDocument &doc);
+JsonDocument load_json_from_sd(const char *path);
 void display_animation_function(LovyanGFX *gfx);
 bool play_wav_from_sd(uint32_t repeat = 1, int channel = -1, bool stop_current = true);
 bool play_wav_memory(File& wavFile, size_t fileSize, uint32_t repeat, int channel, bool stop_current);
@@ -103,6 +109,28 @@ public:
              ESP.getFreeHeap(), ESP.getMinFreeHeap(), ESP.getSketchSize());
 
     res["text"] = String(buffer);
+    return true;
+  }
+};
+
+class CatPassagesToolInfo : public McpTool
+{
+private:
+  void add_schema_prop(JsonObject &schema) const override
+  {
+  }
+
+public:
+  CatPassagesToolInfo() : McpTool("GetCatPassages", "Get cat passages", "retrieves all instances of the cat passing in front of the device in json formats") {}
+
+  bool execute(const JsonVariantConst recieved_args, JsonArray &result, String &error) const override
+  {
+    JsonObject res = result.add<JsonObject>();
+    res["type"] = "text";
+    JsonDocument doc = load_json_from_sd("/data.json");
+    String jsonString;
+    serializeJson(doc, jsonString);
+    res["text"] = jsonString;
     return true;
   }
 };
@@ -320,11 +348,13 @@ void setup()
   SystemInfoTool *system_tool = new SystemInfoTool();
   ScreenTool *screen_tool = new ScreenTool();
   SpeakerTool *speaker_tool = new SpeakerTool();
+  CatPassagesToolInfo *cat_passages_tool = new CatPassagesToolInfo();
 
   mcp_tool_handler->add_tool(serial_tool);
   mcp_tool_handler->add_tool(system_tool);
   mcp_tool_handler->add_tool(screen_tool);
   mcp_tool_handler->add_tool(speaker_tool);
+  mcp_tool_handler->add_tool(cat_passages_tool);
 
 
   // start asyncWebServer
@@ -332,24 +362,6 @@ void setup()
 
   Serial.println("Server ready !");
   M5.Display.println("Server ready !");
-
-  Serial.println("Test Writing in SD card");
-  M5.Display.println("Test Writing in SD card");
-
-  JsonDocument doc;
-  doc["device"] = "M5Stack Core S3 SE";
-  doc["uptime"] = millis();
-  doc["free_heap"] = ESP.getFreeHeap();
-  if (save_json_info__to_sd("/log.json", doc))
-  {
-    Serial.println("SD card writed");
-    M5.Display.println("SD card writed");
-  }
-  else
-  {
-    Serial.println("Writing in SD card failed");
-    M5.Display.println("Writing in SD card failed");
-  }
 }
 
 void loop()
@@ -362,6 +374,8 @@ void loop()
   sths34pf80_tmos_drdy_status_t dataReady;
   TMOS.getDataReady(&dataReady);
 
+  pre_ultrasonic_distance = ULTRASONIC_SENSOR.getDistance() / 10; // mm -> cm
+
   if (dataReady.drdy == 1)
   {
     sths34pf80_tmos_func_status_t status;
@@ -371,18 +385,48 @@ void loop()
 
     if (status.mot_flag == 1 && status.pres_flag == 1 && motionVal > 300)
     {
-      Serial.print("Organic presence and motion detected");
-      Serial.printf("PrescenceValue:%d\n", presenceVal);
-      Serial.printf("MotionValue:%d\n", motionVal);
+      if(!has_passed){
+        Serial.print("Organic presence and motion detected");
+        Serial.printf("PrescenceValue:%d\n", presenceVal);
+        Serial.printf("MotionValue:%d\n", motionVal);
+        int ultrasonic_distance_threshold = pre_ultrasonic_distance - (pre_ultrasonic_distance * distance_threshold / 100);
+
+        while(ULTRASONIC_SENSOR.getDistance() / 10 >= ultrasonic_distance_threshold){}
+        post_ultrasonic_distance = ULTRASONIC_SENSOR.getDistance() / 10;
+        Serial.printf("%.2fcm \n", post_ultrasonic_distance);
+        has_passed = true;
+      }
     }
+    else{has_passed = false;}
   }
 
-  static unsigned long last_distance_check = 0;
-  if (millis() - last_distance_check > 2000)
-  {
-    last_distance_check = millis();
-    Serial.printf("%.2fmm", ULTRASONIC_SENSOR.getDistance());
-    Serial.println("");
+  if(post_ultrasonic_distance != 0){
+    time_t now = time(nullptr);
+    struct tm *local_tm = localtime(&now);
+    char date_buffer[20];
+    strftime(date_buffer, sizeof(date_buffer),"%d.%m.%Y:%H:%M", local_tm);
+    
+    JsonDocument new_entry;
+    JsonDocument doc = load_json_from_sd(JSON_FILE);
+    new_entry["date"] = String(date_buffer);
+    new_entry["distance"] = post_ultrasonic_distance;
+    post_ultrasonic_distance = 0;
+
+    if(!doc.is<JsonArray>()){
+      doc.to<JsonArray>();
+    }
+    doc.add(new_entry);
+
+    if (save_json_info__to_sd(JSON_FILE, doc))
+    {
+      Serial.println("SD card writed");
+      M5.Display.println("SD card writed");
+    }
+    else
+    {
+      Serial.println("Writing in SD card failed");
+      M5.Display.println("Writing in SD card failed");
+    }
   }
 
   static unsigned long last_diagnostic = 0;
@@ -447,14 +491,37 @@ bool save_json_info__to_sd(const char *path, JsonDocument &doc)
 
   if (serializeJson(doc, file) == 0)
   {
-    Serial.println("Échec de l'écriture du JSON");
+    Serial.println("Failed to write JSON");
     file.close();
     return false;
   }
 
   file.close();
-  Serial.printf("Fichier %s enregistré !\n", path);
+  Serial.printf("File %s saved !\n", path);
   return true;
+}
+
+JsonDocument load_json_from_sd(const char *path)
+{
+  JsonDocument doc; 
+
+  File file = SD.open(path, FILE_READ);
+  if (!file)
+  {
+    Serial.printf("The file %s does not yet exist (or cannot be read).\n", path);
+    return doc; 
+  }
+
+  DeserializationError error = deserializeJson(doc, file);
+  file.close();
+
+  if (error)
+  {
+    Serial.printf("JSON parsing error on %s: %s \n", path, error.c_str());
+    doc.clear();
+  }
+
+  return doc;
 }
 
 /// @brief Display an animation in the screen (source : https://docs.m5stack.com/en/arduino/m5cores3/display)
