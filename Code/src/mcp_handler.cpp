@@ -7,7 +7,6 @@
 #include "mcp_handler.h"
 #include "mcp_tools_handler.h"
 
-/////////////////////////// MAIN CODE /////////////////////////////////
 McpHandler::McpHandler(JsonDocument &json_request, String *awnser) : 
     _json_request(json_request), _awnser(awnser) {}
 
@@ -36,67 +35,12 @@ void McpHandler::handle(){
     }
 }
 
-////////// MCP RESPONSE /////////
-
-void McpHandler::_init_respond(){
-    // get id of conv
-    int cli_id = _json_request["id"];
-    const char* protocol_version = _json_request["params"]["protocolVersion"];
-
-    // create response
-    JsonDocument doc;
-    doc["jsonrpc"] = "2.0";
-    doc["id"] = cli_id;
-
-    // Principal nested objects
-    JsonObject json_result = doc["result"].to<JsonObject>();
-
-    // nested json objects of result object
-    JsonObject json_capabilities = json_result["capabilities"].to<JsonObject>();
-    JsonObject json_resources = json_result["resources"].to<JsonObject>();
-    JsonObject json_tools = json_capabilities["tools"].to<JsonObject>();
-    JsonObject json_server_info = json_result["serverInfo"].to<JsonObject>();
-
-    json_result["protocolVersion"] = protocol_version;
-    json_tools["listChanged"] = false;
-    
-    //nested json objects of serverInfo object
-    json_server_info["name"] = "MCP_ESP";
-    json_server_info["version"] = "1.0.0";
-    serializeJson(doc,*_awnser);
-}
-
-int McpHandler::_get_mcp_request_type(){
-    // the initialize message has been recieved
-    if(_json_request["method"] == "initialize"){return 0;}
-
-    // a request has been recieved
-    else if(
-        !_json_request["id"].isNull() && 
-        _json_request["method"].as<String>()
-    ){return 1;}
-
-    // a notification has been recieved
-    else if(
-        _json_request["method"].as<String>().startsWith("notifications/")
-    ){return 2;}
-
-    // a response has been recieved
-    else if(
-        _json_request["id"].as<String>() && 
-        !_json_request["method"].as<String>() &&
-        _json_request["result"].as<String>()
-    ){return 3;}
-
-    // no primitive has been recieved
-    return -1;
-}
-
 void McpHandler::create_mcp_response_headrer(AsyncWebServerResponse *mcp_response){
     // CORS header
     mcp_response->addHeader("Access-Control-Allow-Origin", "*");
     mcp_response->addHeader("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
     mcp_response->addHeader("Access-Control-Allow-Headers", "*");
+
     switch (_mcp_recieved_code){
         case 0: {
             // Initialize header
@@ -126,6 +70,60 @@ void McpHandler::create_mcp_response_headrer(AsyncWebServerResponse *mcp_respons
 McpToolHandler* McpHandler::create_tool_handler(uint16_t registry_size){
     _mcp_tools_handler = new McpToolHandler(registry_size);
     return _mcp_tools_handler;
+}
+
+void McpHandler::_init_respond(){
+    // get id of conv
+    int cli_id                      = _json_request["id"];
+    const char* protocol_version    = _json_request["params"]["protocolVersion"];
+
+    // create response
+    JsonDocument doc;
+    doc["jsonrpc"]  = "2.0";
+    doc["id"]       = cli_id;
+
+    // Principal nested objects
+    JsonObject json_result = doc["result"].to<JsonObject>();
+
+    // nested json objects of result object
+    JsonObject json_capabilities    = json_result["capabilities"].to<JsonObject>();
+    JsonObject json_resources       = json_result["resources"].to<JsonObject>();
+    JsonObject json_tools           = json_capabilities["tools"].to<JsonObject>();
+    JsonObject json_server_info     = json_result["serverInfo"].to<JsonObject>();
+
+    json_result["protocolVersion"] = protocol_version;
+    json_tools["listChanged"]      = false;
+    
+    //nested json objects of serverInfo object
+    json_server_info["name"]    = "MCP_ESP";
+    json_server_info["version"] = "1.0.0";
+    serializeJson(doc,*_awnser);
+}
+
+int McpHandler::_get_mcp_request_type(){
+    // the initialize message has been recieved
+    if(_json_request["method"] == "initialize"){return 0;}
+
+    // a request has been recieved
+    else if(
+        !_json_request["id"].isNull() && 
+        _json_request["method"].as<String>()
+    ){return 1;}
+
+    // a notification has been recieved
+    else if(
+        _json_request["method"].as<String>().startsWith("notifications/")
+    ){return 2;}
+
+    // a response has been recieved
+    else if(
+        _json_request["id"].as<String>() && 
+        !_json_request["method"].as<String>() &&
+        _json_request["result"].as<String>()
+    ){return 3;}
+
+    // no primitive has been recieved
+    return -1;
 }
 
 void McpHandler::_mcp_handle_recieved_request(){
@@ -160,25 +158,20 @@ const char* McpHandler::get_session_id() const{
     return _session_id;
 }
 
-void McpHandler::execute_tool(){
+void McpHandler::execute_tools(){
     if(_is_request_call_tool){
         JsonDocument doc;
-        doc["jsonrpc"] = "2.0";
-        doc["id"] = _json_request["id"].as<uint8_t>();
+        doc["jsonrpc"]  = "2.0";
+        doc["id"]       = _json_request["id"].as<uint8_t>();
 
-        JsonObject result = doc["result"].to<JsonObject>();
-        JsonArray content = doc["result"]["content"].to<JsonArray>();
-        JsonObject tool = _json_request["params"];
+        JsonObject result   = doc["result"].to<JsonObject>();
+        JsonArray content   = doc["result"]["content"].to<JsonArray>();
+        JsonObject tool     = _json_request["params"];
 
         Serial.println();
-        bool call_result = _mcp_tools_handler->call_tool(tool,content);
+        bool call_result    = _mcp_tools_handler->call_tool(tool,content);
 
-        // if(call_result){
-        //     result["isError"] = false;
-        // }
-        // else{
-        //     result["isError"] = true;
-        // }
+
         serializeJson(doc,*_awnser);
         _is_request_call_tool = false;
     }

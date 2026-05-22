@@ -4,9 +4,6 @@
 #include "mcp_handler.h"
 #include <Arduino.h>
 
-//////////////////////// CLASS ///////////////////////
-
-////////////////////// VARS ////////////////////////
 JsonDocument json_body;
 String awnser = "";
 
@@ -51,6 +48,9 @@ McpWebServer::McpWebServer(uint16_t port) : AsyncWebServer(port){
     }); 
 }
 
+McpHandler* McpWebServer::get_mcp_handler(){
+    return _mcp_handler;
+}
 //////////////// WebServer matchers ////////////////
 
 bool McpWebServer::_post_handler_matcher(AsyncWebServerRequest* request){
@@ -119,11 +119,11 @@ void McpWebServer::_on_post_mcp_request_body_callback(AsyncWebServerRequest *req
 
         // handle response with the request
         _mcp_handler->handle();
-        // Checks if the last recieved request is a tool call
 
+        // Checks if the last recieved request is a tool call
         if(_mcp_handler->get_is_request_call()){
             // if so calls the tool and send the response via SSE
-            _mcp_handler->execute_tool();
+            _mcp_handler->execute_tools();
             _mcp_sse_handler->send(awnser.c_str(), "message");
         }
 
@@ -171,6 +171,3 @@ void McpWebServer::_display_body(String * body, size_t len, size_t total){
     Serial.printf("Length expected : %u bytes, Total got : %u\n", len, total);
 }
 
-McpHandler* McpWebServer::get_mcp_handler(){
-    return _mcp_handler;
-}

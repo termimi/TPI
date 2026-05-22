@@ -31,7 +31,18 @@ void McpTool::add_parameter(JsonObject &schema, const char* param_name, const ch
         required_params.add(param_name);
     }
 }
-//////////// RETRIEVAL FUNCS /////////////////
+
+const char* McpTool::get_name(){
+    return _name;
+}
+
+const char* McpTool::get_title(){
+    return _title;
+}
+
+const char* McpTool::get_description(){
+    return _description;
+}
 
 const char* McpTool::_get_param_type(const char* str_param_type) const{
     if(str_param_type == "bool"){
@@ -48,19 +59,6 @@ const char* McpTool::_get_param_type(const char* str_param_type) const{
         return "";
     }
 }
-
-const char* McpTool::get_name(){
-    return _name;
-}
-
-const char* McpTool::get_title(){
-    return _title;
-}
-
-const char* McpTool::get_description(){
-    return _description;
-}
-
 
 
 

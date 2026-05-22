@@ -8,15 +8,15 @@
 class McpWebHandler : public AsyncWebHandler {
     private:
         std::function<bool(AsyncWebServerRequest*)> _matcher;
-        ArRequestHandlerFunction _onRequest;
-        ArUploadHandlerFunction _onUpload;
-        ArBodyHandlerFunction _onBody;
+        ArRequestHandlerFunction    _onRequest;
+        ArUploadHandlerFunction     _onUpload;
+        ArBodyHandlerFunction       _onBody;
     public:
         McpWebHandler(
             std::function<bool(AsyncWebServerRequest*)> matcher, 
-            ArRequestHandlerFunction onRequest, 
-            ArUploadHandlerFunction onUpload = NULL, 
-            ArBodyHandlerFunction onBody = NULL
+            ArRequestHandlerFunction    onRequest, 
+            ArUploadHandlerFunction     onUpload    = NULL, 
+            ArBodyHandlerFunction       onBody      = NULL
         ): _matcher(matcher), _onRequest(onRequest), _onUpload(onUpload), _onBody(onBody) {}
 
         bool canHandle(AsyncWebServerRequest *request) const override {
@@ -30,10 +30,10 @@ class McpWebHandler : public AsyncWebHandler {
 
 class McpWebServer : public AsyncWebServer{
     private:
-        McpHandler *_mcp_handler;
-        McpWebHandler *_mcp_post_web_handler;
-        McpWebHandler *_mcp_get_web_handler;
-        AsyncEventSource *_mcp_sse_handler;
+        McpHandler          *_mcp_handler;
+        McpWebHandler       *_mcp_post_web_handler;
+        McpWebHandler       *_mcp_get_web_handler;
+        AsyncEventSource    *_mcp_sse_handler;
 
         void _on_post_mcp_request_callback(AsyncWebServerRequest *request);
 

@@ -5,7 +5,7 @@
 #include "mcp_tools.h"
 #include <Arduino.h>
 
-
+/// @brief Handles the global tool logic (Storage, list, calls)
 class McpToolHandler
 {
     private:

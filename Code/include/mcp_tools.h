@@ -38,8 +38,15 @@ class McpTool
         const char* get_title();
         const char* get_description();
 
+        /// @brief Builds the input schema of the tool
+        /// @param tool MCP tool
         virtual void build_schema(JsonObject &tool) const;
 
+        /// @brief Execute the tool
+        /// @param recieved_args 
+        /// @param result 
+        /// @param error 
+        /// @return True -> OK False -> KO
         virtual bool execute(const JsonVariantConst recieved_args, JsonArray& result, String& error) const = 0;
 };
 
