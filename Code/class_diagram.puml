@@ -1,0 +1,117 @@
+@startuml
+
+
+
+
+
+/' Objects '/
+
+class McpHandler {
+	+McpHandler(JsonDocument& json_request, String* awnser)
+	-_json_request : JsonDocument&
+	-_mcp_tools_handler : McpToolHandler*
+	+create_tool_handler(uint16_t registry_size) : McpToolHandler*
+	-_awnser : String*
+	-_is_request_call_tool : bool
+	+get_is_request_call() : bool
+	+get_session_id() : char* {query}
+	-_session_id : const char*
+	-_get_mcp_request_type() : int
+	-_mcp_recieved_code : int
+	-_init_respond() : void
+	-_mcp_handle_recieved_request() : void
+	+create_mcp_response_headrer(AsyncWebServerResponse* _mcp_response) : void
+	+execute_tools() : void
+	+handle() : void
+}
+
+
+abstract class McpTool {
+	+McpTool(const char* name, const char* title, const char* description)
+	+~McpTool()
+	+{abstract} execute(const JsonVariantConst recieved_args, JsonArray& result, String& error) : bool {query}
+	#get_mcp_param(const JsonVariantConst args, const char* name, T& value, String& error) : bool {query}
+	-_get_param_type(const char* str_param_type) : char* {query}
+	+get_description() : char*
+	+get_name() : char*
+	+get_title() : char*
+	-_description : const char*
+	-_name : const char*
+	-_title : const char*
+	#add_parameter(JsonObject& schema, const char* param_name, const char* param_type, const char* description, bool required) : void {query}
+	#{abstract} add_schema_prop(JsonObject& schema) : void {query}
+	+build_schema(JsonObject& tool) : void {query}
+}
+
+
+class McpToolHandler {
+	+McpToolHandler(int reg_size)
+	+call_tool(JsonObject& mcp_params, JsonArray& result) : bool
+	-_reg_size : int
+	-_tools_registry : std::vector<McpTool*>
+	+add_tool(McpTool* tool) : void
+	+retrieve_tools_list_json(JsonDocument& awnser) : void
+}
+
+
+class McpWebHandler {
+	+McpWebHandler(std::function<bool ( AsyncWebServerRequest* )> matcher, ArRequestHandlerFunction onRequest, ArUploadHandlerFunction onUpload, ArBodyHandlerFunction onBody)
+	-function<bool(AsyncWebServerRequest*)
+	-_onBody : ArBodyHandlerFunction
+	-_onRequest : ArRequestHandlerFunction
+	-_onUpload : ArUploadHandlerFunction
+	+canHandle(AsyncWebServerRequest* request) : bool {query}
+	+handleBody(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) : void
+	+handleRequest(AsyncWebServerRequest* request) : void
+	+handleUpload(AsyncWebServerRequest* request, const String& filename, size_t index, uint8_t* data, size_t len, bool final) : void
+}
+
+
+class McpWebServer {
+	+McpWebServer(uint16_t port)
+	-_mcp_sse_handler : AsyncEventSource*
+	-_mcp_handler : McpHandler*
+	+get_mcp_handler() : McpHandler*
+	-_mcp_get_web_handler : McpWebHandler*
+	-_mcp_post_web_handler : McpWebHandler*
+	-_get_handler_matcher(AsyncWebServerRequest* request) : bool
+	-_post_handler_matcher(AsyncWebServerRequest* request) : bool
+	-_display_body(String* body, size_t len, size_t total) : void
+	-_on_post_mcp_request_body_callback(AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) : void
+	-_on_post_mcp_request_callback(AsyncWebServerRequest* request) : void
+	-_on_post_mcp_upload_callback(AsyncWebServerRequest* request, String filename, size_t index, uint8_t* data, size_t len, bool final) : void
+	-_send_sse_flux(AsyncEventSourceClient* client) : void
+}
+
+
+
+
+
+/' Inheritance relationships '/
+
+
+
+
+/' Aggregation relationships '/
+
+McpHandler o-- McpToolHandler
+
+
+McpToolHandler o-- McpTool
+
+
+McpWebServer o-- McpHandler
+
+
+McpWebServer "2" o-- McpWebHandler
+
+
+
+
+
+
+/' Nested objects '/
+
+
+
+@enduml

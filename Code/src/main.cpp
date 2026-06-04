@@ -8,6 +8,7 @@
 #include <Unit_Sonic.h>
 #include <esp_sntp.h>
 #include <atomic>
+#include <ESPmDNS.h>
 
 #include "mcp_web_server.h"
 #include "mcp_tools_handler.h"
@@ -380,7 +381,8 @@ void loop()
   // M5.update() handle buttons & alim
   M5.update();
   M5.Display.clear();
-
+  M5.Display.setCursor(0, 0);
+  M5.Display.println(WiFi.localIP());
   // Prepare TMOS data
   sths34pf80_tmos_drdy_status_t dataReady;
   TMOS.getDataReady(&dataReady);
@@ -452,6 +454,8 @@ void loop()
   }
 
   if(trigger_animation){
+    M5.Display.clear();
+    M5.Display.setCursor(0, 0);
     unsigned long start_time = millis();
     while(millis() - start_time < 10000){
       int x       = rand() % M5.Display.width();
