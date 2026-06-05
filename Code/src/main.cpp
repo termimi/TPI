@@ -132,7 +132,7 @@ private:
   }
 
 public:
-  CatPassagesToolInfo() : McpTool("GetCatCrossings", "Get cat crossings", "retrieves all instances of the cat crossings in front of the device in json formats") {}
+  CatPassagesToolInfo() : McpTool("GetCatCrossings", "Get cat crossings", "retrieves all instances of the cat crossings in front of the device in json formats, date formats : d.m.Y:H:i") {}
 
   bool execute(const JsonVariantConst recieved_args, JsonArray &result, String &error) const override
   {
